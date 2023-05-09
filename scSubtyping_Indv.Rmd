@@ -1,0 +1,119 @@
+---
+title: "scSubtyping_Indv2"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+#Packages installed prior to analysis
+Each package should be installed one-by-one
+install.packages: (c("Seurat", "ggplot2"))
+install.packages: ("Matrix")
+RCurl
+scales
+cowplot
+devtools
+BiocManagers
+Seurat
+
+#Install Bioconductor packages
+Install each package one at a time
+BiocManager::install("SingleCellExperiment")
+infercnv
+AnnotationHub
+ensembldb
+
+#Load packages needed for scSubtype score analysis: 
+```{r}
+library(Seurat)
+library(Matrix)
+library(tidyverse)
+```
+
+
+#Load the data and integrate the sparse matrix
+Download patient data as an http from the following link: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE176078
+Make sure to unzip the data before proceeding. Keep all patient files in one place and easy to access - we will be calculating multiple features/scores for each patient and we want the data to be easy to integrate!
+```{r}
+setwd("~/Desktop/BrCa_cell_atlas/BrCa_cell_indv-data/indv26-CID4535")
+#CID3586 is the directory downloaded from GEO for patient ID:3586
+barcodes <- read.delim("count_matrix_barcodes.tsv", header = FALSE, stringsAsFactors = FALSE)
+genes <- read.delim("count_matrix_genes.tsv", header = FALSE, stringsAsFactors = FALSE)
+sparse_matrix_indv1 <- readMM("count_matrix_sparse.mtx")
+#Make sure to change "indv1" to whichever individual ID number (i.e. 3586) you are working on
+colnames(sparse_matrix_indv1) <- barcodes$V1
+rownames(sparse_matrix_indv1) <- genes$V1
+saveRDS(sparse_matrix_indv1, "sparse_matrix_indv26.rds")
+```
+Summary: For Individual 1 (indv1), the sparse matrix (i.e. the matrix with all the 0s taken out) was integrated with barcode (cell ID) information as the column names and the gene IDs as the row names, such that for every cell barcode in columns there are row-number of genes with sparse matrix counts. Saved as an RDS file for easier access in future analysis. 
+
+
+#Load RDS object, create Seurat object, and scale and extract data
+```{r}
+setwd("~/Desktop/BrCa_cell_atlas/BrCa_cell_indv-data/indv26-CID4535")
+sparse_matrix_indv1 <- readRDS("sparse_matrix_indv26.rds")
+indv1 <- CreateSeuratObject(counts = sparse_matrix_indv1)
+indv1 <- ScaleData(indv1)
+tocalc <- as.data.frame(indv1@assays$RNA@scale.data)
+```
+
+
+#Read in the scSubtype gene signatures
+```{r}
+setwd("~/Desktop/BrCa_cell_atlas/scSubtype")
+signal_data <- read.csv("NatGen_Supplementary_table_S4.csv")
+setwd("~/Desktop/BrCa_cell_atlas/BrCa_cell_indv-data/indv26-CID4535")
+temp_allgenes <- c(as.vector(signal_data[,"Basal_SC"]),
+                   as.vector(signal_data[,"Her2E_SC"]),
+                   as.vector(signal_data[,"LumA_SC"]),
+                   as.vector(signal_data[,"LumB_SC"]))
+temp_allgenes <- unique(temp_allgenes[!temp_allgenes == ""])
+#the temp_allgenes step serves to extract the gene names associated with each scSubtype from the NatGen signature file, removing duplicates and any empty strings. 
+```
+
+
+#Calculating the mean scSubtype scores and Highest Calls for each cell in the dataset (we will use both of these features, make sure to keep the data easy to find and specific to each individual)
+```{r}
+#This block calculates the mean expression of each gene signature in the "signal_data" scSubtype file across all the cells in "tocalc" (the RDS file loaded for indv1) and stores the results in a matrix called "outdat"
+#outdat matrix as as many rows as there are gene signatures in "signal_data" and as many columns as there are cells in "tocalc". 
+outdat <- matrix(0,
+                 nrow = ncol(signal_data),
+                 ncol = ncol(tocalc),
+                 dimnames = list(colnames(signal_data),
+                                 colnames(tocalc)))
+for (i in 1:ncol(signal_data)) {
+  row <- as.character(signal_data[,i])
+  row <- unique(row[row != ""])
+  genes <- which(rownames(tocalc) %in% row)
+  temp <- apply(tocalc[genes, ], 2, function(x) {mean(as.numeric(x), na.rm = TRUE)})
+  outdat[i, ] <- as.numeric(temp)}
+
+#remove any signatures with all-zero scores to avoid noise or bias in downstream analysis - "equivalent to having missing values, not a number 0 value"
+final <- outdat[which(rowSums(outdat, na.rm = TRUE) != 0), ]
+finalm <- as.data.frame(final)
+
+#center-sweep normalization of remaining scores: 
+center_sweep <- function(x, row.w = rep(1, nrow(x))/nrow(x)) {
+  get_average <- function(v) sum(v * row.w)/sum(row.w)
+  average <- apply(x, 2, get_average)
+  sweep(x, 2, average)
+}
+finalmt <- as.data.frame(t(finalm))
+finalm.sweep.t <- center_sweep(finalmt)
+
+
+#obtain highest scSubtype call for each cell
+Finalnames <- colnames(finalm.sweep.t)[max.col(finalm.sweep.t, ties.method = "first")]
+finalm.sweep.t$SCSubtypeCall <- Finalnames
+
+#write out the scSubtype scores and highest calls as separate text files:
+setwd("~/Desktop/BrCa_cell_atlas/BrCa_cell_indv-data/indv26-CID4535")
+write.table(finalm.sweep.t, "indv26_ScSubtype-Scores.txt", sep = "\t")
+write.table(Finalnames, "indv26_ScSubtypeCALLS.txt", sep = "\t")
+```
+
+
+
+
+
+
+
