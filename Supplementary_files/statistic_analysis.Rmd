@@ -1,0 +1,1025 @@
+---
+title: "Statistics_analysis"
+author: "Mikayla, Mustafa, Yibo"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+# Data structure:
+
+We have the following variables in the data:
+
+-   Clinical_Subtype: The type of breast cancer, categorical variable.
+    (response variable)
+
+-   Patient_ID: unique patient id.
+
+-   Gender: gender, categorical variable
+
+-   GMA_tumors_GS: The Gini-Simpson index of tumor's genomic instability score.
+
+-   GMA_all_cells_GS: The Gini-Simpson index of all cell's genomic instability score.
+
+-   GMA_Tumors_Entropy: The entropy of tumor cell's gene module score.
+
+-   GMA_all_cells_Entropy: The entropy of all cell's gene module score.
+
+-   GMA_tumors_CV: The coefficient of variability (CV) of tumor's gene module score.
+
+-   GMA_all_cells_CV: The coefficient of variability (CV) of all cell's gene module score.
+
+-   tumor_GIS_variance: The variance of genomic instability score among tumor cells.
+
+-   all_GIS_variance: The variance of genomic instability score among all cells
+
+-   ScSubtype_GS:
+
+-   ScSubtype_Entropy:
+
+-   ScSubtype_CV:
+
+# Preprocessing
+
+## Preprocess CNV data as the data was in matrix format
+
+```{r}
+# Load required libraries
+library(tidyverse)
+
+# Read the input CSV file
+input_data <- read_csv("CNV_variance_all_cells.csv")
+
+# Convert input_data to a data frame if it's not
+input_data <- as.data.frame(input_data)
+
+# Extract Patient_ID and tumor_GIS_variance values
+patient_id <- input_data$patient_id
+tumor_gis_variance <- diag(as.matrix(input_data[,-1]))
+
+# Combine the extracted data into a new data frame
+output_data <- tibble(Patient_ID = patient_id, tumor_GIS_variance = tumor_gis_variance)
+
+# Write the output CSV file
+write_csv(output_data, "CNV_tumor_all.csv")
+```
+
+```{r}
+# Load required libraries
+library(tidyverse)
+
+# Read the input CSV file
+input_data <- read_csv("CNV_variance.csv")
+
+# Convert input_data to a data frame if it's not
+input_data <- as.data.frame(input_data)
+
+# Extract Patient_ID and tumor_GIS_variance values
+patient_id <- input_data$patient_id
+tumor_gis_variance <- diag(as.matrix(input_data[,-1]))
+
+# Combine the extracted data into a new data frame
+output_data <- tibble(Patient_ID = patient_id, tumor_GIS_variance = tumor_gis_variance)
+
+# Write the output CSV file
+write_csv(output_data, "CNV_tumor.csv")
+```
+
+## Merge the preprocessed CNV variance files with the metadata
+
+```{r}
+# Load required libraries
+library(tidyverse)
+
+# Read the CSV files
+gse_metadata <- read_csv("GSE_metadata.csv")
+cnv_tumor <- read_csv("CNV_tumor.csv")
+cnv_all <- read_csv("CNV_all.csv")
+
+# Merge the data based on the shared column Patient_ID
+merged_data <- gse_metadata %>%
+  left_join(cnv_tumor, by = "Patient_ID") %>%
+  left_join(cnv_all, by = "Patient_ID")
+
+# Write the merged data to a new CSV file
+write_csv(merged_data, "merged_data.csv")
+```
+
+## Merge the GMA and scSUbtype entropy, GSI, and CV to three different csv file for further analysis.
+
+```{r}
+# Read the CSV files
+merged_data <- read_csv("merged_data.csv")
+gene_module_ok <- read_csv("gene_module_ok.csv")
+gene_module_k7 <- read_csv("gene_module_k7.csv")
+scSubtype = read_csv("scSubtype.csv")
+
+# Merge Gini_Simpson and rename columns
+merged_GS <- gene_module_ok %>%
+  select(Patient_ID, GMA_tumors_GS = Gini_Simpson) %>%
+  left_join(gene_module_k7 %>% select(Patient_ID, GMA_all_cells_GS = Gini_Simpson), by = "Patient_ID") %>%
+  left_join(merged_data, by = "Patient_ID") %>%
+  left_join(scSubtype %>% select(Patient_ID, scSubtype_GS = Gini_Simpson))
+
+# Write merged_GS to a new CSV file
+write_csv(merged_GS, "merged_GS.csv")
+
+# Merge Entropy and rename columns
+merged_Entropy <- gene_module_ok %>%
+  select(Patient_ID, GMA_tumors_Entropy = Entropy) %>%
+  left_join(gene_module_k7 %>% select(Patient_ID, GMA_all_cells_Entropy = Entropy), by = "Patient_ID") %>%
+  left_join(merged_data, by = "Patient_ID") %>%
+  left_join(scSubtype %>% select(Patient_ID, scSubtype_Entropy = Entropy))
+
+# Write merged_Entropy to a new CSV file
+write_csv(merged_Entropy, "merged_Entropy.csv")
+
+# Merge CV, rename columns, and merge with merged_data
+merged_CV <- gene_module_ok %>%
+  select(Patient_ID, GMA_tumors_CV = CV) %>%
+  left_join(gene_module_k7 %>% select(Patient_ID, GMA_all_cells_CV = CV), by = "Patient_ID") %>%
+  left_join(merged_data, by = "Patient_ID") %>%
+  left_join(scSubtype %>% select(Patient_ID, scSubtype_CV = CV))
+
+# Write merged_CV to a new CSV file
+write_csv(merged_CV, "merged_CV.csv")
+```
+
+# Descriptive statistics
+
+```{r}
+# Read the merged CSV files
+merged_GS <- read_csv("merged_GS.csv")
+merged_Entropy <- read_csv("merged_Entropy.csv")
+merged_CV <- read_csv("merged_CV.csv")
+
+# Merge the data based on the shared column Patient_ID
+merged_metadata <- merged_GS %>%
+  left_join(merged_Entropy, by = "Patient_ID") %>%
+  left_join(merged_CV, by = "Patient_ID")
+
+# Write the merged data to a new CSV file
+write_csv(merged_metadata, "merged_metadata.csv")
+```
+
+## Visualize Distribution
+
+```{r}
+# Read the merged_metadata CSV file
+merged_metadata <- read_csv("merged_metadata.csv")
+
+# Continuous and categorical column names
+continuous_columns <- c("GMA_tumors_GS", "GMA_all_cells_GS", "GMA_tumors_Entropy",
+                        "GMA_all_cells_Entropy", "GMA_tumors_CV", "GMA_all_cells_CV",
+                        "tumor_GIS_variance", "all_GIS_variance", "scSubtype_CV", "scSubtype_GS", "scSubtype_Entropy")
+categorical_columns <- c("Clinical_Subtype", "Gender")
+
+# Create box plots for continuous columns
+continuous_plots <- list()
+
+for (i in seq_along(continuous_columns)) {
+  plot <- ggplot(merged_metadata, aes_string(x = 1, y = continuous_columns[i])) +
+    geom_boxplot(fill = "skyblue", color = "black", outlier.color = "red", outlier.shape = 1) +
+    theme_minimal() +
+    theme(axis.text.x = element_blank(),
+          axis.ticks.x = element_blank()) +
+    ggtitle(paste("Distribution of", continuous_columns[i])) +
+    xlab("") +
+    ylab(continuous_columns[i]) +
+    facet_wrap(~continuous_columns[i], scales = "free_y")
+  print(plot)
+}
+
+# Create bar plots for categorical columns using facetting
+categorical_plots <- list()
+
+for (i in seq_along(categorical_columns)) {
+  plot <- ggplot(merged_metadata) +
+    geom_bar(aes_string(x = categorical_columns[i], fill = categorical_columns[i]), color = "black") +
+    theme_minimal() +
+    facet_wrap(facets = vars(eval(parse(text = categorical_columns[i]))), scales = "free_y") +
+    labs(title = paste("Distribution of", categorical_columns[i]),
+         x = categorical_columns[i],
+         y = "Frequency") +
+    guides(fill = "none")
+  print(plot)
+}
+```
+
+From the plot above, we can find that when measure heterogeneity based on Gini-Simpson Index and Entropy, tumor cells are more concentrically distributed and has a lower value than that of all cells.
+However, when measure heterogeneity based on CV, it seems that tumor cells are more sparsely distributed and have a lower value.
+
+While for the variance on genome instability score, it seems that the variance of all cells is much more concentrated and lower than that of tumor cells.
+
+The response variable: Clinical_Subtype is also unbalancedly distributed, as ER+ has 12, TNBC has 8.
+HER2+/ER+ and HER2+ has 3.
+Moreover, as all the patients are female, we might not need this variable in the future model fitting.
+
+## Correlation analysis
+
+Use pearson correlation for continuous variables:
+
+```{r}
+# Calculate Pearson correlation for continuous variables
+continuous_corr <- cor(merged_metadata[continuous_columns], method = "pearson")
+continuous_corr
+```
+
+## Visualize correlation as heatmap
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(reshape2)
+
+# Create a heatmap for continuous-continuous correlations
+continuous_corr_melted <- melt(continuous_corr)
+colnames(continuous_corr_melted) <- c("Variable1", "Variable2", "value")
+
+heatmap <- ggplot(continuous_corr_melted, aes(x = Variable1, y = Variable2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0, limit = c(-1, 1), name = "Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  coord_equal() +
+  ggtitle("Heatmap of Pearson Correlations") +
+  xlab("Continuous Variables") +
+  ylab("Continuous Variables")
+print(heatmap)
+```
+
+The correlation is as we expected before as GMA for tumors and all cells has certain degree of correlation.
+Tumor and all cell's genome instability score variance also has correlation.
+
+GMA_tumors_Entropy has large correlation with GMA_tumor_GS as they are measuring the same heterogeneity.
+Same applied for GMA_all_cells_GS and GMA_all_cells_Entropy.
+It seems that the three metrics have great correlation especially for GS and Entropy, while other variables don't have huge correlation.
+
+## Visualize the relation between each variable and the response variable.
+
+```{r}
+library(ggplot2)
+
+# Create a boxplot for each continuous variable based on Clinical_Subtype
+for (col in continuous_columns) {
+  p <- ggplot(merged_metadata, aes_string(x = "Clinical_Subtype", y = col)) +
+    geom_boxplot() +
+    theme_minimal() +
+    labs(title = paste("Boxplot of", col, "by Clinical_Subtype"),
+         x = "Clinical Subtype",
+         y = col)
+  print(p)
+}
+```
+
+From the result, it seems that clinical sub type has no significant difference among each other on most of the variables.
+Except for those metrics on gene module analysis (GMA).
+Both the intra-tumor and all cells heterogeneity seems to account for some sub type difference.
+
+# Model Fitting
+
+## Models based on Gini-Simpson Index
+
+### Linear model based on Gini-Simpson Index
+
+Let's start with a linear model and see the p-value to see whether some variables might be significant.
+
+```{r}
+# Read the merged_GS.csv file
+merged_GS <- read.csv("merged_GS.csv")
+
+# Remove 'Gender' from the data
+merged_GS$Gender <- NULL
+
+# Convert Clinical_Subtype to a factor and then to a numeric variable
+merged_GS$Clinical_Subtype <- as.factor(merged_GS$Clinical_Subtype)
+merged_GS$Clinical_Subtype <- as.numeric(merged_GS$Clinical_Subtype)
+
+# Fit the linear model
+GS_linear_model <- lm(Clinical_Subtype ~ . - Patient_ID, data = merged_GS)
+
+# Summarize the model
+GS_model_summary <- summary(GS_linear_model)
+GS_model_summary
+```
+
+Based on the p-value, it seems that none of the variable is significant.
+
+### LASSO based on Gini-Simpson Index
+
+Before fitting logistic model, we can try a linear model to see which variables might have a significant effect on the model and do some feature selection
+
+```{r}
+# Load required libraries
+library(glmnet)
+
+# Read the merged_GS.csv file
+merged_GS <- read.csv("merged_GS.csv")
+
+# Remove 'Gender' from the data
+merged_GS$Gender <- NULL
+
+# Convert Clinical_Subtype to a factor and then to a numeric variable
+merged_GS$Clinical_Subtype <- as.factor(merged_GS$Clinical_Subtype)
+merged_GS$Clinical_Subtype <- as.numeric(merged_GS$Clinical_Subtype)
+
+# Prepare the data for glmnet
+predictor_matrix <- model.matrix(Clinical_Subtype ~ . - Patient_ID, data = merged_GS)
+response_vector <- merged_GS$Clinical_Subtype
+
+# Fit the LASSO linear model
+lambda_seq <- 10^seq(10, -2, length.out = 100) # Define a sequence of lambda values
+lasso_model <- glmnet(predictor_matrix, response_vector, alpha = 1, lambda = lambda_seq)
+
+# Cross-validation for choosing the best lambda
+cv_lasso <- cv.glmnet(predictor_matrix, response_vector, alpha = 1, lambda = lambda_seq)
+best_lambda <- cv_lasso$lambda.min
+
+# Fit the final model with the best lambda
+GS_lasso_model <- glmnet(predictor_matrix, response_vector, alpha = 1, lambda = best_lambda)
+
+# Display the coefficients for the selected variables
+coef(GS_lasso_model)
+```
+
+From the result, it seems that none of the variable is selected based on l2 norm.
+
+### Multinomial Logistic Regression based on Gini-Simpson Index
+
+Let's first fit a multinomial logistic regression model based on the Gini-Simpson index:
+
+```{r}
+# Load required libraries
+library(nnet)
+
+# Read the merged_GS.csv file
+merged_GS <- read.csv("merged_GS.csv")
+
+# Remove 'Gender' from the data
+merged_GS$Gender <- NULL
+
+# Fit the multinomial logistic regression model
+GSmodel <- multinom(Clinical_Subtype ~ . - Patient_ID, data = merged_GS)
+
+
+# Display the model summary (output will be saved to the text file)
+summary(GSmodel)
+```
+
+Do a model selection based on the AIC criterion using a step-wise search method
+
+```{r}
+GSmodeli = step(GSmodel)
+```
+
+```{r}
+summary(GSmodeli)
+```
+
+Based on the result of step-wise search, it seems that none of the predictors above can provide a significant improvement on the null model based on the AIC criteria.
+But this is probably due to the lack of samples.
+We'll process more data in the future to exam the result again.
+
+### Cross-validation to validate the multinomial logistic model
+
+```{r}
+library(caret)
+
+# Read the merged_GS.csv file
+merged_GS <- read.csv("merged_GS.csv")
+
+# Remove 'Gender' and 'Patient_ID' from the data
+merged_GS$Gender <- NULL
+merged_GS$Patient_ID <- NULL
+
+# Convert 'Clinical_Subtype' to a factor
+merged_GS$Clinical_Subtype <- as.factor(merged_GS$Clinical_Subtype)
+
+# Create a matrix of predictor variables
+predictors <- model.matrix(Clinical_Subtype ~ ., data = merged_GS)
+
+# Set up cross-validation using the 'caret' package
+cv_folds <- createFolds(merged_GS$Clinical_Subtype, k = 10)
+
+# Perform k-fold cross-validation
+cv_results <- lapply(cv_folds, function(fold_index) {
+  # Split data into training and testing sets
+  train_data <- merged_GS[-fold_index, ]
+  test_data <- merged_GS[fold_index, ]
+  
+  # Fit the multinomial logistic regression model on training data
+  GSmodel <- multinom(Clinical_Subtype ~ ., data = train_data)
+  
+  # Make predictions on the test set
+  predicted <- predict(GSmodel, newdata = test_data)
+  
+  # Calculate accuracy
+  accuracy <- mean(predicted == test_data$Clinical_Subtype)
+  
+  return(accuracy)
+})
+
+# Calculate the mean accuracy across all folds
+mean_accuracy <- mean(unlist(cv_results))
+
+# Display the mean accuracy
+mean_accuracy
+```
+
+The accuracy is 0.31667.
+Let's also see what's the accuracy of a null model.
+(Intercept-only model)
+
+```{r}
+# Load required libraries
+library(nnet)
+library(caret)
+
+# Read the merged_GS.csv file
+merged_GS <- read.csv("merged_GS.csv")
+
+# Remove 'Gender' and 'Patient_ID' from the data
+merged_GS$Gender <- NULL
+merged_GS$Patient_ID <- NULL
+
+# Convert 'Clinical_Subtype' to a factor
+merged_GS$Clinical_Subtype <- as.factor(merged_GS$Clinical_Subtype)
+
+# Set up cross-validation using the 'caret' package
+cv_folds <- createFolds(merged_GS$Clinical_Subtype, k = 10)
+
+# Perform k-fold cross-validation
+cv_results_null <- lapply(cv_folds, function(fold_index) {
+  # Split data into training and testing sets
+  train_data <- merged_GS[-fold_index, ]
+  test_data <- merged_GS[fold_index, ]
+  
+  # Fit the null model (intercept-only model) on training data
+  null_model <- multinom(Clinical_Subtype ~ 1, data = train_data)
+  
+  # Make predictions on the test set
+  predicted_null <- predict(null_model, newdata = test_data)
+  
+  # Calculate accuracy
+  accuracy_null <- mean(predicted_null == test_data$Clinical_Subtype)
+  
+  return(accuracy_null)
+})
+
+# Calculate the mean accuracy for the null model across all folds
+mean_accuracy_null <- mean(unlist(cv_results_null))
+
+# Display the mean accuracy of the null model
+mean_accuracy_null
+```
+
+The intercept-only model has an average accuracy of 0.4667, which is even higher than the multinomial logistic model.
+
+### SVM with Radial Kernrl and Cross-validation
+
+```{r}
+# Load required libraries
+library(e1071)
+library(caret)
+set.seed(42)
+
+# Read the merged_GS.csv file
+merged_GS <- read.csv("merged_GS.csv")
+
+# Remove 'Gender' and 'Patient_ID' from the data
+merged_GS$Gender <- NULL
+merged_GS$Patient_ID <- NULL
+
+# Convert 'Clinical_Subtype' to a factor
+merged_GS$Clinical_Subtype <- as.factor(merged_GS$Clinical_Subtype)
+
+# Set up cross-validation using the 'caret' package
+cv_folds <- createFolds(merged_GS$Clinical_Subtype, k = 10)
+
+# Perform k-fold cross-validation
+cv_results_svm <- lapply(cv_folds, function(fold_index) {
+  # Split data into training and testing sets
+  train_data <- merged_GS[-fold_index, ]
+  test_data <- merged_GS[fold_index, ]
+  
+  # Fit the SVM model on training data
+  svm_model <- svm(Clinical_Subtype ~ ., data = train_data, kernel = "radial")
+  
+  # Make predictions on the test set
+  predicted_svm <- predict(svm_model, newdata = test_data)
+  
+  # Calculate accuracy
+  accuracy_svm <- mean(predicted_svm == test_data$Clinical_Subtype)
+  
+  return(accuracy_svm)
+})
+
+# Calculate the mean accuracy for the SVM model across all folds
+mean_accuracy_svm <- mean(unlist(cv_results_svm))
+
+# Display the mean accuracy of the SVM model
+mean_accuracy_svm
+```
+
+The accuracy is 0.433, which is still close to the intercept-only model but still lower.
+
+### Random Forest Model and Out-of-bag validation
+
+```{r}
+# Load required library
+library(randomForest)
+
+# Read the merged_GS.csv file
+merged_GS <- read.csv("merged_GS.csv")
+
+# Remove 'Gender' from the data
+merged_GS$Gender <- NULL
+
+# Convert 'Clinical_Subtype' to a factor
+merged_GS$Clinical_Subtype <- as.factor(merged_GS$Clinical_Subtype)
+
+# Fit the random forest model
+rf_model <- randomForest(Clinical_Subtype ~ . - Patient_ID, data = merged_GS, importance = TRUE, proximity = TRUE)
+
+# Display OOB error rate
+print(rf_model)
+
+# Display feature importance
+importance(rf_model)
+```
+
+The out-of-pocket error rate is 73.08%, which makes this model the least accurate so far.
+
+### Discussion
+
+The result turns out that none of our predictors are significant and the result is even worse than a intercept-only model is largely because of the lack of samples and our unbalanced dataset.
+In the future, we'll collect more data and try whether the intra-tumor heterogeneity can be used to predict cancer type.
+
+## Models based on Entropy
+
+Below we'll try some other metrics for intra-tumor heterogeneity but since the Entropy and Gini-Simpson Index has some correlation, we won't fit linear models or LASSO to interpret the relation between the response variable and features.
+
+### Multinomial Logistic Regression Based on Entropy
+
+```{r}
+# Load required libraries
+library(nnet)
+
+# Read the merged_Entropy.csv file
+merged_Entropy <- read.csv("merged_Entropy.csv")
+
+# Remove 'Gender' from the data
+merged_Entropy$Gender <- NULL
+
+# Fit the multinomial logistic regression model
+Emodel <- multinom(Clinical_Subtype ~ . - Patient_ID, data = merged_Entropy)
+
+
+# Display the model summary (output will be saved to the text file)
+summary(Emodel)
+```
+
+```{r}
+Emodeli = step(Emodel)
+
+summary(Emodeli)
+```
+
+It seems that Entropy as a metric for intra-tumor heterogeneity also doesn't work well for multinomial logistic regression model.
+
+#### Cross-validation for Multinomial Logistic Model
+
+```{r}
+library(caret)
+
+# Read the merged_Entropy.csv file
+merged_Entropy <- read.csv("merged_Entropy.csv")
+
+# Remove 'Gender' and 'Patient_ID' from the data
+merged_Entropy$Gender <- NULL
+merged_Entropy$Patient_ID <- NULL
+
+# Convert 'Clinical_Subtype' to a factor
+merged_Entropy$Clinical_Subtype <- as.factor(merged_Entropy$Clinical_Subtype)
+
+# Create a matrix of predictor variables
+predictors <- model.matrix(Clinical_Subtype ~ ., data = merged_Entropy)
+
+# Set up cross-validation using the 'caret' package
+cv_folds <- createFolds(merged_Entropy$Clinical_Subtype, k = 10)
+
+# Perform k-fold cross-validation
+cv_results <- lapply(cv_folds, function(fold_index) {
+  # Split data into training and testing sets
+  train_data <- merged_Entropy[-fold_index, ]
+  test_data <- merged_Entropy[fold_index, ]
+  
+  # Fit the multinomial logistic regression model on training data
+  Entropymodel <- multinom(Clinical_Subtype ~ ., data = train_data)
+  
+  # Make predictions on the test set
+  predicted <- predict(Entropymodel, newdata = test_data)
+  
+  # Calculate accuracy
+  accuracy <- mean(predicted == test_data$Clinical_Subtype)
+  
+  return(accuracy)
+})
+
+# Calculate the mean accuracy across all folds
+mean_accuracy <- mean(unlist(cv_results))
+
+# Display the mean accuracy
+mean_accuracy
+```
+
+The accuracy based on entropy is 0.2667, which is even worse than the multinomial logistic model based on Gini-Simpson Index.
+
+### SVM
+
+```{r}
+# Load required libraries
+library(e1071)
+library(caret)
+
+set.seed(42)
+
+# Read the merged_Entropy.csv file
+merged_Entropy <- read.csv("merged_Entropy.csv")
+
+# Remove 'Gender' and 'Patient_ID' from the data
+merged_Entropy$Gender <- NULL
+merged_Entropy$Patient_ID <- NULL
+
+# Convert 'Clinical_Subtype' to a factor
+merged_Entropy$Clinical_Subtype <- as.factor(merged_Entropy$Clinical_Subtype)
+
+# Set up cross-validation using the 'caret' package
+cv_folds <- createFolds(merged_Entropy$Clinical_Subtype, k = 10)
+
+# Perform k-fold cross-validation
+cv_results_svm <- lapply(cv_folds, function(fold_index) {
+  # Split data into training and testing sets
+  train_data <- merged_Entropy[-fold_index, ]
+  test_data <- merged_Entropy[fold_index, ]
+  
+  # Fit the SVM model on training data
+  svm_model <- svm(Clinical_Subtype ~ ., data = train_data, kernel = "radial")
+  
+  # Make predictions on the test set
+  predicted_svm <- predict(svm_model, newdata = test_data)
+  
+  # Calculate accuracy
+  accuracy_svm <- mean(predicted_svm == test_data$Clinical_Subtype)
+  
+  return(accuracy_svm)
+})
+
+# Calculate the mean accuracy for the SVM model across all folds
+mean_accuracy_svm <- mean(unlist(cv_results_svm))
+
+# Display the mean accuracy of the SVM model
+mean_accuracy_svm
+```
+
+The accuracy of SVM based on entropy is 0.4833, which is better than the intercept-only model.
+However, the performance of this model is randomized, which makes it hard to predicting the accuracy.
+
+### Random Forest
+
+```{r}
+# Load required library
+library(randomForest)
+
+# Read the merged_Entropy.csv file
+merged_Entropy <- read.csv("merged_Entropy.csv")
+
+# Remove 'Gender' from the data
+merged_Entropy$Gender <- NULL
+
+# Convert 'Clinical_Subtype' to a factor
+merged_Entropy$Clinical_Subtype <- as.factor(merged_Entropy$Clinical_Subtype)
+
+# Fit the random forest model
+rf_model <- randomForest(Clinical_Subtype ~ . - Patient_ID, data = merged_Entropy, importance = TRUE, proximity = TRUE)
+
+# Display OOB error rate
+print(rf_model)
+
+# Display feature importance
+importance(rf_model)
+```
+
+The error rate for this model is identical to the random forest model fitted using Gini-Simpson index as metric.
+
+## Model based on CV
+
+At last, we see whether CV, which is usually used to measure the variance of continuous data can provide better insights.
+
+### Multinomial logistic model
+
+```{r}
+# Load required libraries
+library(nnet)
+
+# Read the merged_CV.csv file
+merged_CV <- read.csv("merged_CV.csv")
+
+# Remove 'Gender' from the data
+merged_CV$Gender <- NULL
+
+# Fit the multinomial logistic regression model
+CVmodel <- multinom(Clinical_Subtype ~ . - Patient_ID, data = merged_CV)
+
+
+# Display the model summary (output will be saved to the text file)
+summary(CVmodel)
+```
+
+```{r}
+CVmodeli = step(CVmodel)
+```
+
+```{r}
+summary(CVmodeli)
+```
+
+It seems that when using CV, GMA_tumors_CV might be a good predictor.
+
+Let's see what's it's p-value for a linear model:
+
+```{r}
+# Read the merged_CV.csv file
+merged_CV <- read.csv("merged_CV.csv")
+
+# Remove 'Gender' from the data
+merged_CV$Gender <- NULL
+
+# Convert Clinical_Subtype to a factor and then to a numeric variable
+merged_CV$Clinical_Subtype <- as.factor(merged_CV$Clinical_Subtype)
+merged_CV$Clinical_Subtype <- as.numeric(merged_CV$Clinical_Subtype)
+
+# Fit the linear model
+CV_linear_model <- lm(Clinical_Subtype ~ . - Patient_ID, data = merged_CV)
+
+# Summarize the model
+CV_model_summary <- summary(CV_linear_model)
+CV_model_summary
+```
+
+It seems that GMA_tumors_CV may very likely to be a significant predictor.
+
+#### Cross-validation on GMA_tumors_CV
+
+```{r}
+library(caret)
+
+# Read the merged_CV.csv file
+merged_CV <- read.csv("merged_CV.csv")
+
+# Remove 'Gender' and 'Patient_ID' from the data
+merged_CV$Gender <- NULL
+merged_CV$Patient_ID <- NULL
+
+# Convert 'Clinical_Subtype' to a factor
+merged_CV$Clinical_Subtype <- as.factor(merged_CV$Clinical_Subtype)
+
+# Create a matrix of predictor variables
+predictors <- model.matrix(Clinical_Subtype ~ GMA_tumors_CV, data = merged_CV)
+
+# Set up cross-validation using the 'caret' package
+cv_folds <- createFolds(merged_CV$Clinical_Subtype, k = 10)
+
+# Perform k-fold cross-validation
+cv_results <- lapply(cv_folds, function(fold_index) {
+  # Split data into training and testing sets
+  train_data <- merged_CV[-fold_index, ]
+  test_data <- merged_CV[fold_index, ]
+  
+  # Fit the multinomial logistic regression model on training data
+  CVmodel <- multinom(Clinical_Subtype ~ ., data = train_data)
+  
+  # Make predictions on the test set
+  predicted <- predict(CVmodel, newdata = test_data)
+  
+  # Calculate accuracy
+  accuracy <- mean(predicted == test_data$Clinical_Subtype)
+  
+  return(accuracy)
+})
+
+# Calculate the mean accuracy across all folds
+mean_accuracy <- mean(unlist(cv_results))
+
+# Display the mean accuracy
+mean_accuracy
+```
+
+The accuracy is 0.3917, which is lower than the intercept-only model.
+
+#### Cross-validation based on all the variables
+
+```{r}
+library(caret)
+
+# Read the merged_CV.csv file
+merged_CV <- read.csv("merged_CV.csv")
+
+# Remove 'Gender' and 'Patient_ID' from the data
+merged_CV$Gender <- NULL
+merged_CV$Patient_ID <- NULL
+
+# Convert 'Clinical_Subtype' to a factor
+merged_CV$Clinical_Subtype <- as.factor(merged_CV$Clinical_Subtype)
+
+# Create a matrix of predictor variables
+predictors <- model.matrix(Clinical_Subtype ~ ., data = merged_CV)
+
+# Set up cross-validation using the 'caret' package
+cv_folds <- createFolds(merged_CV$Clinical_Subtype, k = 10)
+
+# Perform k-fold cross-validation
+cv_results <- lapply(cv_folds, function(fold_index) {
+  # Split data into training and testing sets
+  train_data <- merged_CV[-fold_index, ]
+  test_data <- merged_CV[fold_index, ]
+  
+  # Fit the multinomial logistic regression model on training data
+  CVmodel <- multinom(Clinical_Subtype ~ ., data = train_data)
+  
+  # Make predictions on the test set
+  predicted <- predict(CVmodel, newdata = test_data)
+  
+  # Calculate accuracy
+  accuracy <- mean(predicted == test_data$Clinical_Subtype)
+  
+  return(accuracy)
+})
+
+# Calculate the mean accuracy across all folds
+mean_accuracy <- mean(unlist(cv_results))
+
+# Display the mean accuracy
+mean_accuracy
+```
+
+Inclusion of other variables only increase the accuracy a little to 0.4083.
+
+### SVM based on GMA_tumor_CV
+
+```{r}
+# Load required libraries
+library(e1071)
+library(caret)
+
+set.seed(42)
+
+# Read the merged_CV.csv file
+merged_CV <- read.csv("merged_CV.csv")
+
+# Remove 'Gender' and 'Patient_ID' from the data
+merged_CV$Gender <- NULL
+merged_CV$Patient_ID <- NULL
+
+# Convert 'Clinical_Subtype' to a factor
+merged_CV$Clinical_Subtype <- as.factor(merged_CV$Clinical_Subtype)
+
+# Set up cross-validation using the 'caret' package
+cv_folds <- createFolds(merged_CV$Clinical_Subtype, k = 10)
+
+# Perform k-fold cross-validation
+cv_results_svm <- lapply(cv_folds, function(fold_index) {
+  # Split data into training and testing sets
+  train_data <- merged_CV[-fold_index, ]
+  test_data <- merged_CV[fold_index, ]
+  
+  # Fit the SVM model on training data
+  svm_model <- svm(Clinical_Subtype ~ GMA_tumors_CV, data = train_data, kernel = "radial")
+  
+  # Make predictions on the test set
+  predicted_svm <- predict(svm_model, newdata = test_data)
+  
+  # Calculate accuracy
+  accuracy_svm <- mean(predicted_svm == test_data$Clinical_Subtype)
+  
+  return(accuracy_svm)
+})
+
+# Calculate the mean accuracy for the SVM model across all folds
+mean_accuracy_svm <- mean(unlist(cv_results_svm))
+
+# Display the mean accuracy of the SVM model
+mean_accuracy_svm
+```
+
+This time, the model gives an accuracy of 0.45, which is quite close to the intercept-only model.
+
+### SVM based on all variables
+
+```{r}
+# Load required libraries
+library(e1071)
+library(caret)
+
+set.seed(42)
+
+# Read the merged_CV.csv file
+merged_CV <- read.csv("merged_CV.csv")
+
+# Remove 'Gender' and 'Patient_ID' from the data
+merged_CV$Gender <- NULL
+merged_CV$Patient_ID <- NULL
+
+# Convert 'Clinical_Subtype' to a factor
+merged_CV$Clinical_Subtype <- as.factor(merged_CV$Clinical_Subtype)
+
+# Set up cross-validation using the 'caret' package
+cv_folds <- createFolds(merged_CV$Clinical_Subtype, k = 10)
+
+# Perform k-fold cross-validation
+cv_results_svm <- lapply(cv_folds, function(fold_index) {
+  # Split data into training and testing sets
+  train_data <- merged_CV[-fold_index, ]
+  test_data <- merged_CV[fold_index, ]
+  
+  # Fit the SVM model on training data
+  svm_model <- svm(Clinical_Subtype ~ ., data = train_data, kernel = "radial")
+  
+  # Make predictions on the test set
+  predicted_svm <- predict(svm_model, newdata = test_data)
+  
+  # Calculate accuracy
+  accuracy_svm <- mean(predicted_svm == test_data$Clinical_Subtype)
+  
+  return(accuracy_svm)
+})
+
+# Calculate the mean accuracy for the SVM model across all folds
+mean_accuracy_svm <- mean(unlist(cv_results_svm))
+
+# Display the mean accuracy of the SVM model
+mean_accuracy_svm
+```
+
+By including all the variables, the accuracy only increases a little and just catch up with the intercept-only model.
+
+### Random Forest
+
+```{r}
+# Load required library
+library(randomForest)
+
+# Read the merged_Entropy.csv file
+merged_Entropy <- read.csv("merged_Entropy.csv")
+
+# Remove 'Gender' from the data
+merged_Entropy$Gender <- NULL
+
+# Convert 'Clinical_Subtype' to a factor
+merged_Entropy$Clinical_Subtype <- as.factor(merged_Entropy$Clinical_Subtype)
+
+# Fit the random forest model
+rf_model <- randomForest(Clinical_Subtype ~ . - Patient_ID, data = merged_Entropy, importance = TRUE, proximity = TRUE)
+
+# Display OOB error rate
+print(rf_model)
+
+# Display feature importance
+importance(rf_model)
+```
+
+The OOB error rate is 0.80, which makes this model the least accurate, let's try fit a random forest with GMA_tumors_CV only.
+
+```{r}
+# Load required library
+library(randomForest)
+
+# Read the merged_CV.csv file
+merged_CV <- read.csv("merged_CV.csv")
+
+# Remove 'Gender' from the data
+merged_CV$Gender <- NULL
+
+# Convert 'Clinical_Subtype' to a factor
+merged_CV$Clinical_Subtype <- as.factor(merged_CV$Clinical_Subtype)
+
+# Fit the random forest model
+rf_model <- randomForest(Clinical_Subtype ~ GMA_tumors_CV, data = merged_CV, importance = TRUE, proximity = TRUE)
+
+# Display OOB error rate
+print(rf_model)
+
+# Display feature importance
+importance(rf_model)
+```
+
+By only including GMA_tumors_CV only, we improve the accuracy at around 3%.
+
+## Discussion
+
+Overall, we find most of our variables are statistically insignificant, only GMA_tumors_CV, which is the intra-tumor heterogeneity measured by taking the coefficient of variability to the gene module scores calculated using AUCell.
+
+However, as the sample is too small, with only 26 samples and extremely unbalanced, making our model even weaker than the intercept-only model.
+In the future, we'll perform this analysis on other big data sets to gather training data and hopefully receives better accuracy and make the interpretability of models more powerful and convincing.

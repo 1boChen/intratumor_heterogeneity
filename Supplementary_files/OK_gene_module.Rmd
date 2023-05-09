@@ -1,0 +1,519 @@
+---
+title: "Gene module analysis"
+author: "Mikayla, Mustafa, Yibo"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  html_document: default
+---
+
+This report is totally original without taking code from the github repo of the original paper, (mostly because we find their code is too hard to read and relied on obsolete packages). This should also include the output of each section but was accidentally deleted. We couldn’t reproduce the output because it took too long to re-run the whole code that we might miss the deadline.
+
+# The first part of the code did all the data reading, normalizing, PCA, and clusetring at different resolution.
+
+```{r}
+library(Seurat)
+library(Matrix)
+
+# List of patient IDs
+patient_ids <- c("CID3586", "CID3838", "CID3921", "CID3941", "CID3946", "CID3948", "CID3963", "CID4040", "CID4066", "CID4067", "CID4290A", "CID4398", "CID4461", "CID4463", "CID4465", "CID4471", "CID4495", "CID4513", "CID4515", "CID4523", "CID4530N", "CID4535", "CID44041", "CID44971", "CID44991", "CID45171")
+
+# Initialize an empty list to store the Seurat objects
+seurat_objects <- list()
+
+# Loop through each patient
+for (patient_id in patient_ids) {
+  # Define file paths for the patient's data
+  count_matrix_barcodes_path <- paste0("./GSE176078_RAW/", patient_id, "/count_matrix_barcodes.tsv")
+  count_matrix_genes_path <- paste0("./GSE176078_RAW/", patient_id, "/count_matrix_genes.tsv")
+  count_matrix_sparse_path <- paste0("./GSE176078_RAW/", patient_id, "/count_matrix_sparse.mtx")
+  metadata_path <- paste0("./GSE176078_RAW/", patient_id, "/metadata.csv")
+  
+  # Load count matrix and metadata
+  count_matrix <- readMM(file = count_matrix_sparse_path)
+  barcodes <- read.delim(count_matrix_barcodes_path, header = FALSE, col.names = c("barcode"))
+  genes <- read.delim(count_matrix_genes_path, header = FALSE, col.names = c("gene"))
+  metadata <- read.csv(metadata_path, row.names = 1)
+  
+  # Filter cells based on the celltype_major column
+  cells_to_keep <- metadata$celltype_major %in% c("Cancer Epithelial", "CAFs")
+  
+  # Set the colnames and rownames of the count matrix
+  colnames(count_matrix) <- barcodes$barcode
+  rownames(count_matrix) <- genes$gene
+  
+  # Subset the count matrix using the cells_to_keep boolean vector
+  count_matrix <- count_matrix[, cells_to_keep]
+  
+  # Subset the metadata using cells_to_keep
+  metadata <- metadata[cells_to_keep, , drop = FALSE]
+  
+  # Create Seurat object
+  seurat_obj <- CreateSeuratObject(counts = count_matrix, project = patient_id, assay = "RNA", meta.data = metadata)
+  
+  # Preprocessing, normalization, and scaling
+  seurat_obj <- NormalizeData(seurat_obj, normalization.method = "LogNormalize", scale.factor = 10000)
+  seurat_obj <- FindVariableFeatures(seurat_obj, selection.method = "vst", nfeatures = 2000)
+  seurat_obj <- ScaleData(seurat_obj, features = rownames(seurat_obj))
+  
+  # Run PCA on the scaled data
+  seurat_obj <- RunPCA(seurat_obj, features = VariableFeatures(object = seurat_obj))
+  
+  # Create a shared nearest neighbor graph
+  seurat_obj <- FindNeighbors(seurat_obj, reduction = "pca", dims = 1:20)
+  
+  # Find clusters at different resolutions
+  resolutions <- c(0.4, 0.8, 1.2, 1.6, 2.0)
+  for (res in resolutions) {
+    seurat_obj <- FindClusters(seurat_obj, resolution = res, ident.1 = "neoplastic", algorithm = 3)
+  }
+  
+  # Add the processed Seurat object to the list
+  seurat_objects[[patient_id]] <- seurat_obj
+}
+
+# Print the list of Seurat objects to check the results
+seurat_objects
+```
+# Identify all DEGs
+```{r}
+# Initialize an empty list to store the differentially expressed genes (DEGs) for each patient at different resolutions
+patient_DEGs <- list()
+
+# Loop through each patient
+for (patient_id in patient_ids) {
+  # Get the Seurat object for the patient
+  seurat_obj <- seurat_objects[[patient_id]]
+
+  # Initialize an empty list to store the DEGs for each resolution
+  resolution_DEGs <- list()
+
+  # Loop through each resolution
+  for (res in resolutions) {
+    # Update the active identity to the one corresponding to the current resolution
+    Idents(seurat_obj) <- paste0("RNA_snn_res.", res)
+
+    # Find the top 200 differentially expressed genes for each cluster
+    DEGs <- FindAllMarkers(seurat_obj, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25, test.use = "wilcox", max.cells.per.ident = Inf, min.cells.group = 5, max.features = 200)
+
+    # Add the DEGs to the list
+    resolution_DEGs[[as.character(res)]] <- DEGs
+  }
+
+  # Add the DEGs at different resolutions to the list
+  patient_DEGs[[patient_id]] <- resolution_DEGs
+}
+```
+
+# Check data structure
+```{r}
+#str(patient_DEGs)
+```
+
+# filter to preserve only top 200 DEGs
+```{r}
+# Initialize an empty list to store the differentially expressed genes (DEGs) for each patient at different resolutions
+patient_DEGs_top200 <- list()
+
+# Loop through each patient
+for (patient_id in patient_ids) {
+  # Get the DEGs for the patient at different resolutions
+  patient_res_DEGs <- patient_DEGs[[patient_id]]
+
+  # Initialize an empty list to store the top 200 DEGs for each resolution
+  resolution_DEGs_top200 <- list()
+
+  # Loop through each resolution
+  for (res in names(patient_res_DEGs)) {
+    # Get the DEGs for the current resolution
+    res_DEGs <- patient_res_DEGs[[res]]
+
+    # Initialize an empty list to store the top 200 DEGs for each cluster
+    cluster_DEGs_top200 <- list()
+
+    # Get unique cluster IDs
+    unique_clusters <- unique(res_DEGs$cluster)
+
+    # Loop through each cluster
+    for (cluster_id in unique_clusters) {
+      # Filter the DEGs for the current cluster
+      cluster_DEGs <- res_DEGs[res_DEGs$cluster == cluster_id, ]
+
+      # Get the top 200 DEGs for the current cluster
+      top200_DEGs <- head(cluster_DEGs, n = min(200, nrow(cluster_DEGs)))
+
+      # Add the top 200 DEGs for the current cluster to the list
+      cluster_DEGs_top200[[cluster_id]] <- top200_DEGs
+    }
+
+    # Add the top 200 DEGs for each cluster at the current resolution to the list
+    resolution_DEGs_top200[[res]] <- cluster_DEGs_top200
+  }
+
+  # Add the top 200 DEGs at different resolutions for the current patient to the list
+  patient_DEGs_top200[[patient_id]] <- resolution_DEGs_top200
+}
+```
+
+# Check the result
+```{r}
+str(patient_DEGs_top200)
+```
+
+# filter to keep n.gene>5 and n.cell>5
+
+```{r}
+# Initialize an empty list to store the filtered DEGs for each patient at different resolutions
+patient_DEGs_filtered <- list()
+
+# Loop through each patient
+for (patient_id in patient_ids) {
+  cat("Patient:", patient_id, "\n")
+  
+  # Get the top 200 DEGs for the patient at different resolutions
+  patient_res_DEGs_top200 <- patient_DEGs_top200[[patient_id]]
+
+  # Get the metadata of the Seurat object for the current patient
+  metadata <- seurat_objects[[patient_id]]@meta.data
+
+  # Initialize an empty list to store the filtered DEGs for each resolution
+  resolution_DEGs_filtered <- list()
+
+  # Loop through each resolution
+  for (res in names(patient_res_DEGs_top200)) {
+    cat("  Resolution:", res, "\n")
+    
+    # Get the top 200 DEGs for the current resolution
+    res_cluster_DEGs_top200 <- patient_res_DEGs_top200[[res]]
+
+    # Get the cluster column name for the current resolution
+    cluster_col_name <- paste0("RNA_snn_res.", res)
+
+    # Calculate the number of cells in each cluster at the current resolution
+    cluster_counts <- table(metadata[[cluster_col_name]])
+    cat("    Cluster cell counts:", cluster_counts, "\n")
+
+    # Initialize an empty list to store the filtered DEGs for each cluster
+    cluster_DEGs_filtered <- list()
+
+    # Loop through each cluster
+    for (cluster_id in names(res_cluster_DEGs_top200)) {
+      # Get the top 200 DEGs for the current cluster
+      cluster_top200_DEGs <- res_cluster_DEGs_top200[[cluster_id]]
+
+      # Get the number of cells in the current cluster
+      cluster_cell_count <- cluster_counts[[cluster_id]]
+
+      # Check if the gene set contains more than 5 genes and originates from a cluster with more than 5 cells
+      if (nrow(cluster_top200_DEGs) > 5 && cluster_cell_count > 5) {
+        # Add the filtered DEGs for the current cluster to the list
+        cluster_DEGs_filtered[[cluster_id]] <- cluster_top200_DEGs
+      }
+    }
+
+    # Add the filtered DEGs for each cluster at the current resolution to the list
+    resolution_DEGs_filtered[[res]] <- cluster_DEGs_filtered
+    cat("    Number of filtered clusters:", length(cluster_DEGs_filtered), "\n")
+  }
+
+  # Add the filtered DEGs at different resolutions for the current patient to the list
+  patient_DEGs_filtered[[patient_id]] <- resolution_DEGs_filtered
+}
+```
+
+# Compare the filtered result with the original result to ensure the filter process is okay
+```{r}
+# Count the number of clusters in patient_DEGs_filtered
+total_clusters_filtered <- sum(sapply(patient_DEGs_filtered, function(x) sum(sapply(x, length))))
+
+# Count the number of clusters in patient_DEGs_top200
+total_clusters_top200 <- sum(sapply(patient_DEGs_top200, function(x) sum(sapply(x, length))))
+
+cat("Total number of clusters in patient_DEGs_filtered:", total_clusters_filtered, "\n")
+cat("Total number of clusters in patient_DEGs_top200:", total_clusters_top200, "\n")
+```
+# remove redundancy within one sample according to jaccard index > 0.75
+```{r}
+for (patient_id in patient_ids) {
+  patient_res_DEGs_filtered <- patient_DEGs_filtered[[patient_id]]
+  
+  # Loop through each resolution
+  for (res in names(patient_res_DEGs_filtered)) {
+    res_cluster_DEGs_filtered <- patient_res_DEGs_filtered[[res]]
+
+    # Check if the res_cluster_DEGs_filtered is not empty
+    if (length(res_cluster_DEGs_filtered) > 0) {
+      # Calculate Jaccard index for all pairs of gene sets
+      jaccard_values <- matrix(0, nrow = length(res_cluster_DEGs_filtered), ncol = length(res_cluster_DEGs_filtered))
+      for (i in 1:(length(res_cluster_DEGs_filtered) - 1)) {
+        for (j in (i + 1):length(res_cluster_DEGs_filtered)) {
+          set1 <- rownames(res_cluster_DEGs_filtered[[i]])
+          set2 <- rownames(res_cluster_DEGs_filtered[[j]])
+          jaccard_values[i, j] <- jaccard(set1, set2)
+        }
+      }
+
+      cat("Number of gene set pairs with Jaccard index greater than 0.75 in patient", patient_id, "resolution", res, ":", sum(jaccard_values > 0.75), "\n")
+
+      # Find pairs with Jaccard index greater than 0.75 and remove the one with fewer genes
+      to_remove <- c()
+      for (i in 1:(length(res_cluster_DEGs_filtered) - 1)) {
+        for (j in (i + 1):length(res_cluster_DEGs_filtered)) {
+          if (jaccard_values[i, j] > 0.75) {
+            if (length(rownames(res_cluster_DEGs_filtered[[i]])) < length(rownames(res_cluster_DEGs_filtered[[j]]))) {
+              to_remove <- c(to_remove, i)
+            } else {
+              to_remove <- c(to_remove, j)
+            }
+          }
+        }
+      }
+
+      cat("Number of gene sets removed in patient", patient_id, "resolution", res, ":", length(to_remove), "\n")
+
+      # Remove the gene sets identified above if to_remove is not empty
+      if (length(to_remove) > 0) {
+        res_cluster_DEGs_filtered <- res_cluster_DEGs_filtered[-to_remove]
+      }
+
+      # Update patient_DEGs_filtered
+      patient_res_DEGs_filtered[[res]] <- res_cluster_DEGs_filtered
+    } else {
+      cat("No clusters found in patient", patient_id, "resolution", res, "\n")
+    }
+  }
+
+  # Update patient_DEGs_filtered
+  patient_DEGs_filtered[[patient_id]] <- patient_res_DEGs_filtered
+}
+```
+
+# Identify gene modules
+```{r}
+library(cola)
+
+# Combine all gene signatures from patient_DEGs_filtered
+all_gene_signatures <- list()
+for (patient_id in patient_ids) {
+  for (res in names(patient_DEGs_filtered[[patient_id]])) {
+    all_gene_signatures <- c(all_gene_signatures, patient_DEGs_filtered[[patient_id]][[res]])
+  }
+}
+
+# Calculate Jaccard similarity matrix
+jaccard_similarity_matrix <- matrix(0, nrow = length(all_gene_signatures), ncol = length(all_gene_signatures))
+for (i in 1:(length(all_gene_signatures) - 1)) {
+  for (j in (i + 1):length(all_gene_signatures)) {
+    set1 <- rownames(all_gene_signatures[[i]])
+    set2 <- rownames(all_gene_signatures[[j]])
+    jaccard_similarity_matrix[i, j] <- jaccard(set1, set2)
+    jaccard_similarity_matrix[j, i] <- jaccard_similarity_matrix[i, j]
+  }
+}
+```
+
+# Find the optimal K value, top_value_method and parition_method
+```{r}
+library(cola)
+
+r1 = run_all_consensus_partition_methods(jaccard_similarity_matrix, top_value_method = c("SD","MAD"), partition_method = c("skmeans", "kmeans"), max_k = 10)
+
+cola_report(r1, output_dir = "C:/yc/cb_project/scRNASeq_analysis/")
+```
+
+
+#Use the matrix above to do consensus_clustering using skmeans
+```{r}
+# Perform consensus clustering using skmeans from cola package
+set.seed(42) # Set seed for reproducibility
+k <- 6 # Number of gene modules
+consensus_clustering <- consensus_partition(jaccard_similarity_matrix, partition_method = "skmeans", top_value_method = "SD", max_k = k)
+```
+
+# Find the 6 gene modules
+```{r}
+library(dplyr)
+
+# Get the class labels for each gene signature
+class_labels <- consensus_clustering@object_list[["6"]][["class_df"]][["class"]]
+
+# Assign class labels to each gene signature in all_gene_signatures
+labeled_gene_signatures <- lapply(seq_along(all_gene_signatures), function(i) {
+  gene_signature <- all_gene_signatures[[i]]
+  gene_signature$module <- class_labels[i]
+  return(gene_signature)
+})
+
+# Combine all labeled gene signatures into one data frame
+combined_gene_signatures <- do.call(rbind, labeled_gene_signatures)
+
+# Identify the top 200 most commonly expressed genes for each clustered gene module
+top_200_genes_per_module <- combined_gene_signatures %>%
+  group_by(module, gene) %>%
+  summarise(count = n()) %>%
+  arrange(module, desc(count)) %>%
+  group_by(module) %>%
+  slice_max(count, n = 200)
+
+# Split the top 200 genes per module into a list of data frames
+top_200_genes_list <- split(top_200_genes_per_module, top_200_genes_per_module$module)
+```
+
+# Calculate gene module scores based on the module above and AUCell
+```{r}
+library(Matrix)
+library(AUCell)
+
+patient_ids <- c("CID3586", "CID3838", "CID3921", "CID3941", "CID3946", "CID3948", "CID3963", "CID4040", "CID4066", "CID4067", "CID4290A", "CID4398", "CID4461", "CID4463", "CID4465", "CID4471", "CID4495", "CID4513", "CID4515", "CID4523", "CID4530N", "CID4535", "CID44041", "CID44971", "CID44991", "CID45171")
+
+aucell_scores_all_patients <- list()
+
+for (i in 1:length(patient_ids)) {
+  patient_id <- patient_ids[i]
+  cat("Dealing with", i, "of", length(patient_ids), "patients:", patient_id, "\n")
+
+  count_matrix_barcodes_path <- paste0("./GSE176078_RAW/", patient_id, "/count_matrix_barcodes.tsv")
+  count_matrix_genes_path <- paste0("./GSE176078_RAW/", patient_id, "/count_matrix_genes.tsv")
+  count_matrix_sparse_path <- paste0("./GSE176078_RAW/", patient_id, "/count_matrix_sparse.mtx")
+   metadata_path <- paste0("./GSE176078_RAW/", patient_id, "/metadata.csv")
+  
+  count_matrix <- readMM(file = count_matrix_sparse_path)
+  barcodes <- read.delim(count_matrix_barcodes_path, header = FALSE, col.names = c("barcode"))
+  genes <- read.delim(count_matrix_genes_path, header = FALSE, col.names = c("gene"))
+  metadata <- read.csv(metadata_path, row.names = 1)
+  
+  # Filter cells based on the celltype_major column
+  cells_to_keep <- metadata$celltype_major %in% c("Cancer Epithelial", "CAFs")
+  # Get the indices of the cells to keep
+  cells_to_keep_indices <- which(cells_to_keep)
+  
+  # Set the colnames and rownames of the count matrix
+  colnames(count_matrix) <- barcodes$barcode
+  rownames(count_matrix) <- genes$gene
+
+  # Subset the count matrix using the cells_to_keep_indices
+  count_matrix <- count_matrix[, cells_to_keep_indices]
+  
+  exprMatrix <- as.matrix(count_matrix)  # Convert the dgTMatrix to a regular matrix
+  
+  # Calculate enrichment scores for the top 200 genes of each module
+  aucell_scores_list <- list()
+  for (j in 1:length(top_200_genes_list)) {
+    geneSet <- top_200_genes_list[[j]]$gene
+    aucell_scores <- AUCell_run(exprMatrix, list(geneSet=geneSet), aucMaxRank=nrow(exprMatrix)*0.05)
+    aucell_scores_list[[paste0("GM", j)]] <- aucell_scores
+    
+    # Calculate percentage of cells processed
+    percentage_processed <- (j / length(top_200_genes_list)) * 100
+    cat("Processed", round(percentage_processed, 2), "% cells of patient", patient_id, "\n")
+  }
+  
+  aucell_scores_all_patients[[patient_id]] <- aucell_scores_list
+}
+
+# Print the list of AUCell scores for each patient
+aucell_scores_all_patients
+```
+
+# Assign a gene module to each cell based on the highest AUCell score
+```{r}
+library(SummarizedExperiment)
+
+assign_gene_module <- function(patient_id) {
+  cell_ids <- colnames(aucell_scores_all_patients[[patient_id]][["GM1"]])
+  
+  cell_module_assignments <- sapply(cell_ids, function(cell_id) {
+    # Get the scores for the selected cell in each gene module
+    cell_scores <- sapply(names(aucell_scores_all_patients[[patient_id]]), function(module) {
+      as.numeric(assays(aucell_scores_all_patients[[patient_id]][[module]])$AUC[, cell_id])
+    })
+
+    # Find the gene module with the highest score
+    max_module <- names(cell_scores)[which.max(unlist(cell_scores))]
+    
+    return(max_module)
+  }, simplify = FALSE)
+  
+  names(cell_module_assignments) <- cell_ids
+  return(cell_module_assignments)
+}
+
+cell_gene_module_assignments <- lapply(names(aucell_scores_all_patients), assign_gene_module)
+names(cell_gene_module_assignments) <- names(aucell_scores_all_patients)
+```
+
+
+# Calculate gini simpson index and entropy for each patient.
+```{r}
+# Function to calculate Gini-Simpson index
+gini_simpson <- function(counts) {
+  total_counts <- sum(counts)
+  proportions <- counts / total_counts
+  return(1 - sum(proportions^2))
+}
+
+# Function to calculate entropy
+entropy <- function(counts) {
+  total_counts <- sum(counts)
+  proportions <- counts / total_counts
+  return(-sum(proportions * log2(proportions)))
+}
+
+# Function to calculate coefficient of variation (CV)
+cv <- function(counts) {
+  total_counts <- sum(counts)
+  proportions <- counts / total_counts
+  mean_proportions <- mean(proportions)
+  sd_proportions <- sd(proportions)
+  return(sd_proportions / mean_proportions)
+}
+
+# Calculate Gini-Simpson index, entropy, and CV for each patient
+gini_simpson_list <- list()
+entropy_list <- list()
+cv_list <- list()
+
+for (patient_id in names(cell_gene_module_assignments)) {
+  gene_module_assignments <- unlist(cell_gene_module_assignments[[patient_id]])
+  gene_module_counts <- table(gene_module_assignments)
+  gini_simpson_list[[patient_id]] <- gini_simpson(gene_module_counts)
+  entropy_list[[patient_id]] <- entropy(gene_module_counts)
+  cv_list[[patient_id]] <- cv(gene_module_counts)
+}
+
+# Combine results into a data frame
+result <- data.frame(
+  Patient_ID = names(cell_gene_module_assignments),
+  Gini_Simpson = unlist(gini_simpson_list),
+  Entropy = unlist(entropy_list),
+  CV = unlist(cv_list)
+)
+
+print(result)
+
+write.csv(result, file = "gene_module_ok.csv", row.names = FALSE)
+```
+
+
+# Visualize the calculated entropy, CV and GS index.
+```{r}
+library(ggplot2)
+library(reshape2)
+
+# Replace Patient_ID with numbers 1 to 26
+result$Patient_ID <- as.factor(seq(1, nrow(result)))
+
+# Melt the data frame for ggplot
+melted_result <- melt(result, id.vars = "Patient_ID", variable.name = "Metric", value.name = "Value")
+
+# Create the bar plot
+p <- ggplot(melted_result, aes(x = Patient_ID, y = Value, fill = Metric)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 8)) +
+  labs(x = "Patient Number", y = "Value", title = "Metrics for Patients") +
+  facet_wrap(~Metric, scales = "free_y")
+
+print(p)
+```
+
+
