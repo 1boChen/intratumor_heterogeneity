@@ -1,0 +1,79 @@
+---
+title: "Garnett-Classifier"
+author: "MF"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#Wu et al based Garnett Classifier
+
+## BUILDING GARNETT CELL TYPE CALLER
+
+## USING NEW MARKER LIST SIGNATURES FROM:
+## XCELL PAPER 
+## https://genomebiology.biomedcentral.com/articles/10.1186/s13059-017-1349-1
+## brca signatures 
+## https://pubmed.ncbi.nlm.nih.gov/19648928/
+
+# SETUP -------------------------------------------------------------------
+```{r}
+library(Matrix)
+library(tidyverse)
+library(Seurat)
+library(org.Hs.eg.db)
+library(monocle3)
+library(ggplot2)
+library(dplyr)
+```
+
+# DIRECTORIES -------------------------------------------------------------
+```{r}
+setwd("~/Desktop/BrCa-cell/MF_Code")
+dir.create("GarnettOutput")
+setwd("GarnettOutput")
+```
+
+
+# CREATE MONOCLE OBJECT ---------------------------------------------------
+
+```{r}
+setwd("~/desktop/Wu_etal_2021_BRCA_scRNASeq")
+
+# Load metadata
+cell_metadata <- read.csv("metadata.csv", row.names = 1)
+
+# Load gene names
+gene_metadata <- read.table("count_matrix_genes.tsv", header = TRUE, sep = "\t")
+rownames(gene_metadata) <- gene_metadata$V1
+
+# Load sparse matrix
+count_matrix_sparse <- readMM("count_matrix_sparse.mtx")
+
+# Convert to CsparseMatrix
+count_matrix_sparse <- as(count_matrix_sparse, "CsparseMatrix")
+
+# Save the objects as RDS files
+saveRDS(count_matrix_sparse, file = "count_matrix_sparse.rds")
+saveRDS(cell_metadata, file = "cell_metadata.rds")
+saveRDS(gene_metadata, file = "gene_metadata.rds")
+
+# Load the objects from the RDS files
+expression_matrix <- readRDS("count_matrix_sparse.rds")
+cell_metadata <- readRDS("cell_metadata.rds")
+gene_annotation <- readRDS("gene_metadata.rds")
+
+# Check number of rows
+nrow(gene_annotation)
+nrow(expression_matrix)
+
+# Create Monocle object with sparse matrix
+monocle_CDS_object <- new_cell_data_set(expression_matrix,
+                                    cell_metadata = cell_metadata,
+                                    gene_metadata = gene_annotation)
+
+```
